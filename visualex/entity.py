@@ -1,0 +1,924 @@
+from flask import session
+from . import mysql
+from werkzeug.security import check_password_hash
+from datetime import datetime
+import pytz
+import base64
+from PIL import Image
+import io
+import numpy as np
+import numpy
+import cv2
+import matplotlib.pyplot as plt
+import time
+from collections import defaultdict
+from transformers import VisionEncoderDecoderModel, ViTFeatureExtractor, AutoTokenizer
+import torch
+from gtts import gTTS
+import os
+import random
+import openai
+
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+class UserAccount:
+    def __init__(self, username=None, password=None, name=None, surname=None, email=None, date_of_birth=None, address=None, membership_tier="basic"):
+        self.username = username
+        self.password = password
+        self.name = name
+        self.surname = surname
+        self.email = email
+        self.date_of_birth = date_of_birth
+        self.address = address
+        self.membership_tier = membership_tier
+
+    def login(self, username, password):
+
+        session['username'] = username # store the username in the session
+
+        cur = mysql.connection.cursor()
+
+        query = "SELECT password FROM useraccount WHERE username = %s"
+        data = (username,)
+        cur.execute(query, data)
+        account = cur.fetchone()
+        if account:
+        
+            check = check_password_hash(account[0], password) # check if password hash matches
+            return check
+        else:
+            return False
+    
+    
+    def changePW(self, username, password):
+        try:
+            # Query database to update user's password
+            cur = mysql.connection.cursor()
+            query = "UPDATE useraccount SET password = %s WHERE username = %s"
+            data = (password, username)
+            cur.execute(query, data)
+            mysql.connection.commit()
+           
+            cur.close()
+            return True
+        except Exception as e:
+            print(f"Error changing Password: {e}")
+            return False
+
+    def createUserAcc(self, userAcc):
+        try:
+           # Query database to insert values into table to create new account
+           cur = mysql.connection.cursor()
+           query = "INSERT INTO useraccount (username, password, name, surname, email, date_of_birth, address, membership_tier) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)" 
+           data = (userAcc.username, userAcc.password, userAcc.name, userAcc.surname, userAcc.email, userAcc.date_of_birth, userAcc.address, "basic")
+           cur.execute(query, data)
+           
+           mysql.connection.commit()
+           
+           cur.close()
+           return True
+        except Exception as e:
+            print(f"Error creating account: {e}")
+            return False
+        
+    
+    def get_all_emails(self):
+        # get all exisiting emails and store them in an array
+        cur = mysql.connection.cursor()
+        query = "SELECT email FROM useraccount"
+        cur.execute(query)
+        user_data = cur.fetchall()
+        emails = [row[0] for row in user_data]  # Extract emails from each row
+        mysql.connection.commit()
+        cur.close()
+        return emails
+        
+    def assignMembership(self, username, membership):
+        try:
+           #Query database to update membership tier into table to update account
+            cur = mysql.connection.cursor()
+            query = "UPDATE useraccount SET membership_tier = %s WHERE username = %s"
+            data = (membership, username)
+            cur.execute(query, data)
+            mysql.connection.commit()
+           
+            cur.close()
+            return True
+        except Exception as e:
+            print(f"Error changing Membership_tier: {e}")
+            return False
+        
+    def checkMembershipExist(self, username):
+        # check if user has membership 
+        try:
+            cur = mysql.connection.cursor()
+
+            query = "SELECT membership_tier FROM useraccount WHERE username = %s"
+            data = (username,)
+            cur.execute(query, data)
+            membership_data = cur.fetchone()
+
+            cur.close()
+
+            if membership_data[0] == 'premium':
+                return 1
+            else:
+                return 0
+        except Exception as e:
+            print(f"Error Checking Membership: {e}")
+            return None
+    
+    def getAllmembership(self):
+        try:
+           #Query database to retrieve all username and membership tier
+            cur = mysql.connection.cursor()
+            query = "SELECT username, membership_tier FROM useraccount"
+            cur.execute(query)
+            users = cur.fetchall()
+            cur.close()
+            return users  
+        except Exception as e:
+            print(f"Error retrieving membership info: {e}")
+            return None
+        
+    def get_membership_tier_info(self, username):
+        try:
+            #Query database to fetch membership tier from useraccount table for user
+            cur = mysql.connection.cursor()
+            query = "SELECT membership_tier FROM useraccount WHERE username = %s"
+            cur.execute(query, (username,))
+            membership_tier = cur.fetchone()[0]
+            cur.close()
+
+            #Return membership based on membership tier
+            if membership_tier == 'basic':
+                return {'membership_tier': 'basic', 'monthly_fee': 'Free', 'description': [
+                    '1. Generate Descriptive Text', 
+                    '2. Text to Speech feature to read text as audio message']}
+            elif membership_tier == 'premium':
+                return {'membership_tier': 'Premium', 'monthly_fee': '$20.00', 'description': [
+                    '1. Generate Descriptive Text',
+                    '2. Text to Speech feature to read text as audio message',
+                    '3. Image Generation from prompt text',
+                    '4. Generate Vision to give a GREAT descriptive text',
+                    '5. Generate a story for the image instead of just descriptive text.'
+                    '6. Text to Speech feature to read story as audio message']}
+            else:
+                return None
+        except Exception as e:
+            print(f"Error Retrieving Membership Tier Info: {e}")
+            return None
+        
+    def get_user_info(self, username): # query database to get all columns of data from useraccount with the specific username
+        cur = mysql.connection.cursor()
+        query = "SELECT * FROM useraccount WHERE username = %s"
+        cur.execute(query, (username,))
+        user_data = cur.fetchone()
+        mysql.connection.commit()
+        cur.close()
+        return user_data
+
+    def get_user_info2(self, username):  # to edit membership_tier for admin activities
+        session['selected_user'] = username # store the username in the session
+        cur = mysql.connection.cursor()
+        query = "SELECT username, name, surname, email, date_of_birth, address, membership_tier FROM useraccount WHERE username = %s"
+        cur.execute(query, (username,))
+        user_data = cur.fetchone()
+        mysql.connection.commit()
+        cur.close()
+        return user_data
+    
+    def get_user_info3(self, username): # query database to get account details of the specified username
+        cur = mysql.connection.cursor()
+        query = "SELECT username, name, surname, email, date_of_birth, address FROM useraccount WHERE username = %s"
+        cur.execute(query, (username,))
+        user_data = cur.fetchone()
+        mysql.connection.commit()
+        cur.close()
+        return user_data
+
+    
+    def get_all_users(self): # query database to get all existing username 
+        try:
+            cur = mysql.connection.cursor()
+
+            query = "SELECT username FROM useraccount"
+            cur.execute(query)
+            users_list = []
+            for user_name in cur.fetchall():
+                username = user_name[0]
+                users_list.append(username)
+
+            cur.close()
+            return users_list
+        except Exception as e:
+            print(f"Error getting username list: {e}")
+
+    def search_user(self, username): # query database to get check if specified username exist
+        try:
+            cur = mysql.connection.cursor()
+
+            query = "SELECT username FROM useraccount where username = %s"
+            data = (username,)
+            cur.execute(query,data)
+           
+            result =  cur.fetchone()
+
+            cur.close()
+            if result:
+                return result[0]
+            else:
+                return None 
+        except Exception as e:
+            print(f"Error searching user: {e}")
+
+    def edit_profile(self, oldUsername, name, surname, email, dob, address, membership):
+        # query database to update useraccount with new details entered in the form
+        try:
+            cur = mysql.connection.cursor()
+            query = "UPDATE useraccount SET name = %s, surname = %s, email = %s, date_of_birth = %s, address = %s ,membership_tier = %s WHERE username = %s"
+            data = (name, surname, email, dob, address, membership, oldUsername)
+            cur.execute(query, data)
+            mysql.connection.commit()
+           
+            cur.close()
+            return True
+        except Exception as e:
+            print(f"Error changing profile: {e}")
+            return False
+        
+    def edit_profile1(self, oldUsername, name, surname, email, dob, address):
+        # query database to update useraccount with new details entered in the form excluding membership
+        try:
+            cur = mysql.connection.cursor()
+            query = "UPDATE useraccount SET username = %s, name = %s, surname = %s, email = %s, date_of_birth = %s, address = %s WHERE username = %s"
+            data = (name, surname, email, dob, address, oldUsername)
+            cur.execute(query, data)
+            mysql.connection.commit()
+           
+            cur.close()
+            return True
+        except Exception as e:
+            print(f"Error changing profile: {e}")
+            return False
+            
+    def delete_account(self, username):
+        try:
+            cur = mysql.connection.cursor()
+            delete_query = "DELETE FROM useraccount WHERE username = %s"
+            delete_query1 = "DELETE FROM feedback WHERE username = %s"
+            delete_query2 = "DELETE FROM history WHERE username = %s"
+            cur.execute(delete_query, (username,))
+            cur.execute(delete_query1, (username,))
+            cur.execute(delete_query2, (username,))
+            mysql.connection.commit()
+            cur.close()
+            return True
+        except Exception as e:
+            print(f"Error deleting account: {e}")
+            return False
+
+    def get_membership_tier(self, username):
+        try:
+            cur = mysql.connection.cursor()
+            query = "SELECT membership_tier FROM useraccount WHERE username = %s"
+            cur.execute(query, (username,))
+            membership_tier = cur.fetchone()[0]
+            cur.close()
+            return membership_tier
+        except Exception as e:
+            print(f"No membership tier info for current user: {e}")
+            return None
+
+class FeedbackForum:
+    def __init__(self, feedback_id=None, username=None, content=None, feedback_date=None):
+        self.feedback_id = feedback_id
+        self.username = username
+        self.content = content
+        self.feedback_date = feedback_date
+
+    def submitfeedback(self, username, content):
+        try:
+            cur = mysql.connection.cursor()
+
+            query = "INSERT INTO feedback (username, f_content, feedback_date) VALUES (%s, %s, %s)"
+            data = (username, content, datetime.now())
+            cur.execute(query, data)
+
+            mysql.connection.commit()
+
+            cur.close()
+            return True
+        except Exception as e:
+            print(f"Error saving feedback: {e}")
+            return False
+
+    def get_all_feedback(self):
+        try:
+            cur = mysql.connection.cursor()
+
+            query = "SELECT * FROM feedback"
+            cur.execute(query)
+            feedback_list = []
+            for feedback_data in cur.fetchall():
+                feedback = FeedbackForum(feedback_id=feedback_data[0], username=feedback_data[1], content=feedback_data[2], feedback_date=feedback_data[3])
+                feedback_list.append(feedback)
+
+            cur.close()
+            return feedback_list
+        except Exception as e:
+            print(f"Error getting feedback list: {e}")
+    
+    def time_difference(self, feedback_date):
+        #Calculate the time difference between the feedback date and the current time.
+        current_time = datetime.now()
+        time_diff = current_time - feedback_date
+        
+        # Extract days, hours, and minutes
+        days = time_diff.days
+        hours = time_diff.seconds // 3600
+        minutes = (time_diff.seconds // 60) % 60
+        
+        # Format the time difference
+        if days == 0:
+            if hours == 0:
+                if minutes < 2:
+                    return "just now"
+                else:
+                    return f"{minutes} minutes ago"
+            elif hours == 1:
+                return "1 hour ago"
+            else:
+                return f"{hours} hours ago"
+        elif days == 1:
+            return "1 day ago"
+        elif days < 30:
+            return f"{days} days ago"
+        elif days < 365:
+            months = days // 30
+            return f"{months} months ago"
+        else:
+            years = days // 365
+            return f"{years} years ago"
+        
+    def reply_feedback(self, feedback_id, reply):
+        try:
+            cur = mysql.connection.cursor()
+
+            query = "INSERT INTO feedback_replies (feedback_id, reply_content, reply_date) VALUES (%s, %s, %s)"
+            data = (feedback_id, reply, datetime.now())
+            cur.execute(query, data)
+
+            mysql.connection.commit()
+
+            cur.close()
+            return True
+        except Exception as e:
+            print(f"Error replying to feedback: {e}")
+            return False
+        
+    def get_replies(self):
+        try:
+            cur = mysql.connection.cursor()
+
+            query = "SELECT reply_id, feedback_id, reply_content, reply_date FROM feedback_replies"
+            cur.execute(query)
+            
+            reply_list = []
+            for reply_data in cur.fetchall():
+                reply_id = reply_data[0]
+                feedback_id = reply_data[1]
+                reply_content = reply_data[2]
+                reply_date = reply_data[3]
+                
+                reply = {
+                    'reply_id': reply_id,
+                    'feedback_id': feedback_id,
+                    'reply_content': reply_content,
+                    'reply_date': reply_date
+                }
+                reply_list.append(reply)
+
+            cur.close()
+            return reply_list
+        except Exception as e:
+            print(f"Error getting replies: {e}")
+
+
+
+
+class Transactions:
+    def __init__(self, transaction_id=None, username=None, payment_timestamp=None, charges=None):
+        self.transaction_id = transaction_id
+        self.username = username
+        self.payment_timestamp = payment_timestamp
+        self.charges = charges
+
+    def make_payment(self, username, charges):
+        try:
+
+            current_timestamp = datetime.utcnow()
+
+            # Define the timezone GMT+8
+            gmt8_timezone = pytz.timezone('Asia/Singapore')
+
+            # Localize the current timestamp to GMT+8 timezone
+            payment_timestamp = pytz.utc.localize(current_timestamp).astimezone(gmt8_timezone)
+
+            cur = mysql.connection.cursor()
+
+            query = "INSERT INTO transaction (username, payment_timestamp, charges) VALUES (%s, %s, %s)"
+            data = (username, payment_timestamp, charges)
+            cur.execute(query, data)
+
+            mysql.connection.commit()
+            
+            transaction_id = cur.lastrowid
+
+            cur.close()
+            payment_timestamp = str(payment_timestamp)
+            parts = payment_timestamp.split(".")
+            fisrt_part = parts[0]
+            
+            
+            return transaction_id
+        except Exception as e:
+            print(f"Error saving transaction: {e}")
+            return False
+        
+    def get_invoice(self, transaction_id):
+        try:
+
+            cur = mysql.connection.cursor()
+
+            query = "SELECT * FROM transaction WHERE transaction_id = %s"
+            data = (transaction_id,)
+            cur.execute(query, data)
+
+            display = cur.fetchone()
+
+            cur.close()
+            print(display)
+            print(type(display))
+            return display
+        except Exception as e:
+            print(f"Error saving transaction: {e}")
+            return False
+        
+class HistoryLogs:
+    def __init__(self, history_id=None, username=None, h_date=None, result_id=None):
+        self.history_id = history_id
+        self.username = username
+        self.h_date = h_date
+        self.result_id = result_id
+    
+    def get_history_logs_with_predictions(self, username):
+        try:
+            cur = mysql.connection.cursor()
+
+            query = """
+            SELECT h.*, p.image_id, p.predicted_label, p.laplacian_score, i.image_data
+            FROM history h
+            JOIN prediction_results p ON h.result_id = p.result_id
+            JOIN image_metadata i ON p.image_id = i.image_id
+            WHERE h.username = %s
+            """
+            cur.execute(query, (username,))
+            history_logs_with_predictions_and_images = []
+            for row in cur.fetchall():
+                history_log = HistoryLogs(history_id=row[0], username=row[1], h_date=row[2], result_id=row[3])
+                image_blob = row[7]  # Assuming image_blob is the column storing BLOB data
+                # Convert the binary image data to Base64
+                image_data_base64 = base64.b64encode(image_blob).decode('utf-8')
+                prediction_info = {
+                    'image_id': row[4],
+                    'predicted_label': row[5],
+                    'laplacian_score': row[6],
+                    'image_data': image_data_base64
+                }
+                history_logs_with_predictions_and_images.append((history_log, prediction_info))
+
+            cur.close()
+            return history_logs_with_predictions_and_images
+        except Exception as e:
+            print(f"Error getting history logs with predictions and images: {e}")
+            return []
+            
+    def store_predictedResults(self, username, image_id, predicted_label, laplacian_score):
+        try:
+            cur = mysql.connection.cursor()
+
+            query = "INSERT INTO prediction_results (image_id, predicted_label, laplacian_score) VALUES (%s, %s, %s)"
+            data = (image_id, predicted_label, laplacian_score)
+            cur.execute(query, data)
+            cur.execute("SELECT LAST_INSERT_ID()")
+            result_id = cur.fetchone()[0]
+            print("result_id" + str(result_id))
+            query1 = "INSERT INTO history (username, h_date, result_id) VALUES (%s, DATE(NOW()), %s)"
+            data1 = (username, result_id)
+            cur.execute(query1, data1)
+
+            mysql.connection.commit()
+
+            cur.close()
+        
+            return True
+        except Exception as e:
+            print(f"Error saving transaction: {e}")
+            return False
+
+class ImageData:
+    def __init__(self, image_id=None, image_data=None):
+        self.image_id = image_id
+        self.image_data = image_data
+    
+    def store_image(self, image_path):
+        try:
+            # Connect to MySQL database
+            cur = mysql.connection.cursor()
+
+            # Read image files and insert image data into the database
+            with open(image_path, 'rb') as file:
+                image_data = file.read()
+                # Insert image data into image_metadata table
+                cur.execute("INSERT INTO image_metadata (image_data) VALUES (%s)", (image_data,))
+            
+            # Get the last inserted image_id
+            cur.execute("SELECT LAST_INSERT_ID()")
+            image_id = cur.fetchone()[0]
+
+            # Commit changes and close connection
+            mysql.connection.commit()
+            cur.close()
+            print("Image data inserted successfully.")
+            return image_id
+        except Exception as e:
+            print(f"Failed to insert image data: {e}")
+        
+    #for object detection   
+    def objectDetection(self, image_id):
+        labels = open('visualex/coco.names').read().strip().split('\n')
+        # Defining paths to the weights and configuration file with model of Neural Network
+        weights_path = 'visualex/yolov3.weights'
+        configuration_path = 'visualex/yolov3.cfg'
+        # Setting minimum probability to eliminate weak predictions
+        probability_minimum = 0.5
+        # Setting threshold for non maximum suppression
+        threshold = 0.3
+        network = cv2.dnn.readNetFromDarknet(configuration_path, weights_path)
+        # Getting names of all layers
+        layers_names_all = network.getLayerNames()  # list of layers' names
+        # Getting only output layers' names that we need from YOLO algorithm
+        output_layer_indices = network.getUnconnectedOutLayers()
+        layers_names_output = [layers_names_all[i - 1] for i in output_layer_indices]  # list of layers' names
+        # Establish a connection to MySQL
+        cur = mysql.connection.cursor()
+        # Debug: Print image_id for troubleshooting
+        #print(f"Fetching image data for image_id: {image_id}")
+        # Retrieve image data from the database
+        cur.execute("SELECT image_data FROM image_metadata WHERE image_id = %s", (image_id,))
+        row = cur.fetchone()
+        if row is None or not row[0]:  # Check if row is None or image_data is empty
+            return "Image data not found or empty in the database"
+        
+        image_data = row[0]  
+        # # Convert binary data to numpy array
+        nparr = np.frombuffer(image_data, np.uint8)
+        # Decode numpy array as an image using OpenCV
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        # Getting image shape
+        image_input_shape = img.shape
+        blob = cv2.dnn.blobFromImage(img, 1 / 255.0, (416, 416), swapRB=True, crop=False)
+        # Slicing blob and transposing to make channels come at the end
+        blob_to_show = blob[0, :, :, :].transpose(1, 2, 0)
+        # Calculating at the same time, needed time for forward pass
+        network.setInput(blob)  # setting blob as input to the network
+        start = time.time()
+        output_from_network = network.forward(layers_names_output)
+        end = time.time()
+        # In this way we can keep specific colour the same for every class
+        np.random.seed(42)
+        # randint(low, high=None, size=None, dtype='l')
+        colours = np.random.randint(0, 255, size=(len(labels), 3), dtype='uint8')
+        # Preparing lists for detected bounding boxes, obtained confidences and class's number
+        bounding_boxes = []
+        confidences = []
+        class_numbers = []
+        # Getting spacial dimension of input image
+        h, w = image_input_shape[:2]  # Slicing from tuple only first two elements
+        for result in output_from_network:
+            # Going through all detections from current output layer
+            for detection in result:
+                # Getting class for current object
+                scores = detection[5:]
+                class_current = np.argmax(scores)
+
+                # Getting confidence (probability) for current object
+                confidence_current = scores[class_current]
+
+                # Eliminating weak predictions by minimum probability
+                if confidence_current > probability_minimum:
+                    # Scaling bounding box coordinates to the initial image size
+                    # YOLO data format keeps center of detected box and its width and height
+                    # That is why we can just elementwise multiply them to the width and height of the image
+                    box_current = detection[0:4] * np.array([w, h, w, h])
+
+                    # From current box with YOLO format getting top left corner coordinates
+                    # that are x_min and y_min
+                    x_center, y_center, box_width, box_height = box_current.astype('int')
+                    x_min = int(x_center - (box_width / 2))
+                    y_min = int(y_center - (box_height / 2))
+
+                    # Adding results into prepared lists
+                    bounding_boxes.append([x_min, y_min, int(box_width), int(box_height)])
+                    confidences.append(float(confidence_current))
+                    class_numbers.append(class_current)
+        results = cv2.dnn.NMSBoxes(bounding_boxes, confidences, probability_minimum, threshold)
+        # Initialize a dictionary to count detected objects
+        object_counts = defaultdict(int)
+        # Count detected objects
+        for line in results:
+            label = labels[int(class_numbers[line])]
+            object_counts[label] += 1
+
+        # Generate the summary sentence
+        if object_counts:
+            # Construct a list of strings for each object count
+            object_strings = [f"{count} {label}" if count == 1 else f"{count} {label}s" for label, count in object_counts.items()]
+            # Join the object strings into a single sentence
+            sentence = "In the scene, various entities were detected, including " + ", ".join(object_strings[:-1])
+            sentence += f", and {object_strings[-1]}."
+            return sentence
+        else:
+            print("No objects were detected.")
+
+    def caption_gen(self, image_id):
+        # Load the VisionEncoderDecoderModel
+        model = VisionEncoderDecoderModel.from_pretrained("visualex/model_folder")
+        # Load the ViTFeatureExtractor
+        feature_extractor = ViTFeatureExtractor.from_pretrained("visualex/feature_extractor_folder")
+        # Load the tokenizer
+        tokenizer = AutoTokenizer.from_pretrained("visualex/tokenizer_folder")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+        max_length = 16
+        num_beams = 4
+        gen_kwargs = {"max_length": max_length, "num_beams": num_beams}
+        images = []
+        # Establish a connection to MySQL
+        cur = mysql.connection.cursor()
+        # Debug: Print image_id for troubleshooting
+        #print(f"Fetching image data for image_id: {image_id}")
+        # Retrieve image data from the database
+        cur.execute("SELECT image_data FROM image_metadata WHERE image_id = %s", (image_id,))
+        row = cur.fetchone()
+        if row is None or not row[0]:  # Check if row is None or image_data is empty
+            return "Image data not found or empty in the database"
+        # Get image data from the database
+        image_data = row[0]
+        # Convert the image data to PIL Image object
+        image = Image.open(io.BytesIO(image_data))
+        # Convert image to RGB mode if necessary
+        if image.mode != "RGB":
+            image = image.convert(mode="RGB")
+        # Append the image to the images list
+        images.append(image)
+
+        pixel_values = feature_extractor(images=images, return_tensors="pt").pixel_values
+        pixel_values = pixel_values.to(device)
+
+        output_ids = model.generate(pixel_values, **gen_kwargs)
+
+        preds = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+        preds = [pred.strip() for pred in preds]
+        return preds
+
+    def generateText(self, image_id):
+        text1 = self.objectDetection(image_id)
+        text2 = self.caption_gen(image_id)
+        # Ensure text1 and text2 are strings
+        text2 = ' '.join(text2) if isinstance(text2, list) else text2
+        text = text1 + " This image shows, " + text2 + "."
+        return text
+    
+    def autoSelectObjects(self, image_id):
+        labels = open('visualex/coco.names').read().strip().split('\n')
+        weights_path = 'visualex/yolov3.weights'
+        configuration_path = 'visualex/yolov3.cfg'
+        probability_minimum = 0.5
+        threshold = 0.3
+        
+        network = cv2.dnn.readNetFromDarknet(configuration_path, weights_path)
+        layers_names_all = network.getLayerNames()
+        output_layer_indices = network.getUnconnectedOutLayers()
+        layers_names_output = [layers_names_all[i - 1] for i in output_layer_indices]
+        
+        cur = mysql.connection.cursor()
+        cur.execute("SELECT image_data FROM image_metadata WHERE image_id = %s", (image_id,))
+        row = cur.fetchone()
+        if row is None or not row[0]:
+            return "Image data not found or empty in the database"
+        
+        image_data = row[0]
+        nparr = np.frombuffer(image_data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        image_input_shape = img.shape
+        blob = cv2.dnn.blobFromImage(img, 1 / 255.0, (416, 416), swapRB=True, crop=False)
+        network.setInput(blob)
+        output_from_network = network.forward(layers_names_output)
+        
+        np.random.seed(42)
+        colours = np.random.randint(0, 255, size=(len(labels), 3), dtype='uint8')
+        
+        bounding_boxes = []
+        confidences = []
+        class_numbers = []
+        h, w = image_input_shape[:2]
+        
+        for result in output_from_network:
+            for detection in result:
+                scores = detection[5:]
+                class_current = np.argmax(scores)
+                confidence_current = scores[class_current]
+                if confidence_current > probability_minimum:
+                    box_current = detection[0:4] * np.array([w, h, w, h])
+                    x_center, y_center, box_width, box_height = box_current.astype('int')
+                    x_min = int(x_center - (box_width / 2))
+                    y_min = int(y_center - (box_height / 2))
+
+                    bounding_boxes.append([x_min, y_min, int(box_width), int(box_height)])
+                    confidences.append(float(confidence_current))
+                    class_numbers.append(class_current)
+        
+        results = cv2.dnn.NMSBoxes(bounding_boxes, confidences, probability_minimum, threshold)
+        object_counts = defaultdict(int)
+        cropped_images = []
+        for line in results:
+            if len(cropped_images) >= 6:
+                break
+            label = labels[int(class_numbers[line])]  # Fix the index error here
+            object_counts[label] += 1
+            x_min, y_min, box_width, box_height = bounding_boxes[line]  # Fix the index error here
+            cropped_img = img[y_min:y_min+box_height, x_min:x_min+box_width]
+            # Encode the cropped image to base64
+            _, buffer = cv2.imencode('.png', cropped_img)
+            cropped_img_base64 = base64.b64encode(buffer).decode()
+            cropped_images.append((cropped_img_base64, label))
+
+
+        return cropped_images
+    
+    def storyTelling(self, object_list):
+        # Set up your OpenAI API key
+        openai.api_key = os.getenv("openai.api_key")
+        
+        # Dictionary containing the path to the text files based on the length of the object list
+        prompt_files = {
+            1: "visualex/static/story_prompt/prompts_1.txt",
+            2: "visualex/static/story_prompt/prompts_2.txt",
+            3: "visualex/static/story_prompt/prompts_3.txt",
+            4: "visualex/static/story_prompt/prompts_4.txt",
+            5: "visualex/static/story_prompt/prompts_5.txt",
+            6: "visualex/static/story_prompt/prompts_6.txt",
+        }
+        
+        # Get the path to the appropriate text file based on the length of the object list
+        prompt_file = prompt_files.get(len(object_list))
+        
+        # If prompt file is not found, return an error
+        if not prompt_file:
+            return "Sorry, unsupported number of objects"
+        
+        # Read prompts from the file
+        with open(prompt_file, "r") as file:
+            prompts = file.readlines()
+        
+        # Select a random prompt from the list
+        prompt = random.choice(prompts).strip()
+        
+        # Format the prompt with the object list
+        prompt = prompt.format(*object_list)
+        
+        # Use GPT-3.5 to generate the story
+        response = openai.Completion.create(
+            model="gpt-3.5-turbo-instruct",
+            prompt=prompt,
+            temperature=0.5,
+            max_tokens=500
+        )
+        
+        # Get the generated story from the response
+        story = response.choices[0].text.strip()
+        
+        # Print and return the story
+        return story
+                                                                               
+    def imagesGeneration(self, prompt):
+        openai.api_key = os.getenv("openai.api_key")
+
+        response = openai.Image.create(prompt=prompt, n=3, size="512x512")
+        print(response['data'])
+        return response['data']
+    
+    def encode_image(self, image_id):
+        cur = mysql.connection.cursor()
+        cur.execute("SELECT image_data FROM image_metadata WHERE image_id = %s", (image_id,))
+        row = cur.fetchone()
+        if row:
+            image_data = row[0]
+            return base64.b64encode(image_data).decode('utf-8')
+        else:
+            return None
+        
+    def visionDescription(self, image_id):
+        openai.api_key = os.getenv("openai.api_key")
+        
+        base64_image = self.encode_image(image_id)
+        
+        response = openai.ChatCompletion.create(
+        model="gpt-4-turbo",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What’s in this image?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        },
+                    },
+                ],
+            }
+        ],
+        max_tokens=150,
+        )
+        vision = response.choices[0].message.content
+        print(vision)
+        print(type(vision))
+        return vision
+    
+
+class PredictionResults:
+    def __init__(self, result_id=None, model_id=None, image_id=None, predicted_label=None, confidence_score=None, timestamp=None):
+        self.result_id = result_id
+        self.model_id = model_id
+        self.image_id = image_id
+        self.predicted_label = predicted_label
+        self.confidence_score = confidence_score
+        self.timestamp = timestamp
+
+    def generate_audio_from_text(self, text, output_file="audio.mp3"):
+        try:
+            #Check if there is exisitng audio file, if have remove
+            if os.path.exists(output_file):
+                os.remove(output_file)
+            #Use google text to speech convert text to audio 
+            tts = gTTS(text=text, lang='en')
+            tts.save(output_file)    #Save audio to file
+            return True, None
+        except Exception as e:
+            print(f"Error generating audio: {e}")
+            return False, str(e)
+
+    def generate_story_audio_from_text(self, text, output_file="storyaudio.mp3"):
+        try:
+            #Check if there is exisitng audio file, if have remove
+            if os.path.exists(output_file):
+                os.remove(output_file)
+            #Use google text to speech convert text to audio 
+            tts = gTTS(text=text, lang='en')
+            tts.save(output_file)    #Save audio to file
+            return True, None
+        except Exception as e:
+            print(f"Error generating audio: {e}")
+            return False, str(e)
+        
+
+class Blur_Detection:
+    # Define a class for blur detection
+    
+    @staticmethod
+    def fix_image_size(image: numpy.array, expected_pixels: float = 2E6):
+        # Static method to resize the image to a target number of pixels
+        ratio = numpy.sqrt(expected_pixels / (image.shape[0] * image.shape[1]))
+        # Calculate the ratio to resize the image to the target number of pixels
+        return cv2.resize(image, (0, 0), fx=ratio, fy=ratio)
+        # Resize the image using the calculated ratio and return it
+
+    @staticmethod
+    def estimate_blur(image: numpy.array, threshold: int = 100):  # calculate the laplacian score 
+        # Static method to estimate blur in an image
+        if image.ndim == 3:
+            # Check if the image has multiple color channels (i.e., it is a color image)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            # Convert the image to grayscale
+
+        blur_map = cv2.Laplacian(image, cv2.CV_64F)
+        # Calculate the Laplacian (second derivative) of the image to highlight regions of rapid intensity change (edges)
+        score = numpy.var(blur_map)
+        # Compute the variance of the Laplacian, which is a measure of the image's sharpness
+        return blur_map, score, bool(score < threshold)
+        # Return the blur map, the variance score, and a boolean indicating if the score is below the threshold (indicating blurriness)

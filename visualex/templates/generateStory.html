@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Story Generation{% endblock %}
+
+{% block content %}
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detected Objects</title>
+    <style>
+        .object-images {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px; /* Space between images */
+        }
+        .object-image {
+            width: 200px; /* Fixed width for the image */
+            height: 200px; /* Fixed height for the image */
+            text-align: center; /* Center image and label */
+            border: 2px solid #555; /* Border style with increased width and darker color */
+            box-sizing: border-box; /* Include border in width/height calculation */
+            cursor: grab; /* Change cursor to indicate draggable element */
+        }
+        .object-image img {
+            max-width: 100%;
+            max-height: 100%;
+        }
+        .generate-story {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .generate-button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+            font-size: 16px;
+            margin-bottom: 20px; /* Add margin to the bottom */
+        }
+        .generate-button:hover {
+            background-color: #45a049;
+        }
+        .story-output {
+            width: 80%; /* Adjusted width */
+            height: 200px;
+            resize: vertical;
+            overflow-y: auto;
+            margin: 0 auto; /* Centering the text area */
+            display: block;
+        }
+        .generate-audio {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+            font-size: 16px;
+            margin-bottom: 20px; /* Add margin to the bottom */
+        }
+
+        #outputTextarea {
+        width: 80%;
+        height: 250px;
+        margin: auto; /* Center the text area horizontally */
+        display: block; /* Ensure the text area takes up the full width */
+    }
+    </style>
+</head>
+<body class="content">
+    <div style="height: 700px; overflow-y: auto;">
+    <h1>Detected Objects</h1>
+    <div class="object-images" id="sortable">
+        {% for image, label in cropped_images %}
+            <div class="object-image" id="{{ label|replace(" ", "_") }}">
+                <img src="data:image/png;base64,{{ image }}" alt="{{ label }}">
+                <p>{{ label }}</p>
+            </div>
+        {% endfor %}
+    </div>
+    <form id="generateStoryForm" method="post" action="/generate_story">
+        <input type="hidden" name="order" id="listOrderInput">
+        <div class="generate-story">
+            <button type="submit" class="generate-button" id="generateButton">Generate Story</button>
+        </div>
+    </form>
+    <!-- Button to generate story audio -->
+    <div>
+        <div class="generate-story">
+        <h3>Visual StoryTelling</h3>
+    </div>
+        <textarea id="outputTextarea" name="story-ouput" rows="10" cols="50" value="{{story}}"
+            readonly>{{story}}</textarea>
+    </div>
+    <form action="/generatestoryaudio" method="POST">
+        <div class="generate-story">
+        <input type="hidden" name="text" value="{{ story }}">
+        <button type="submit" class="generate-audio">Generate Story Audio</button>
+        <span>
+        <audio controls>
+            <source src="{{ url_for('static', filename='storyaudio.mp3') }}" type="audio/mp3">
+            Audio playback not supported by browser.
+        </audio>
+        </span>
+    </div>
+    </form>
+</div>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.min.js"></script>
+    <script>
+        $(function() {
+            $("#sortable").sortable({
+                update: function(event, ui) {
+                    updateOrder();
+                }
+            });
+            $("#sortable").disableSelection();
+            
+            updateOrder(); // Call updateOrder immediately
+            
+            // Submit the form when the button is clicked
+            $("#generateButton").click(function() {
+                $("#generateStoryForm").submit();
+            });
+    
+            function updateOrder() {
+                var order = [];
+                $(".object-image").each(function() {
+                    order.push($(this).attr('id'));
+                });
+                $("#listOrderInput").val(order.join(","));
+                console.log(order);
+            }
+        });
+    </script>
+    
+</body>
+{% endblock %}
